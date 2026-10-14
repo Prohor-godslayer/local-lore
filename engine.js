@@ -28,7 +28,7 @@ function num(v, d) {
 function normalizeEntry(raw, book) {
   const content = String(raw.content || raw.comment || '').slice(0, 100000);
   const strat = String(raw.strategy || '').toLowerCase();
-  const sec = asKeys(raw.secondaryKeywords || raw.keysecondary || raw.keysSec);
+  const sec = asKeys(raw.secondaryKeywords || raw.keysecondary || raw.keysSec || raw.secondary_keys || raw.secondaryKeys);
   const logicMap = { and_any: 0, not_all: 1, not_any: 2, and_all: 3 };
   const lgs = String(raw.secondaryKeywordStrategy || '').toLowerCase();
   const whole = raw.matchWholeWord != null ? !!raw.matchWholeWord
@@ -45,15 +45,15 @@ function normalizeEntry(raw, book) {
     constant: strat === 'constant' || !!raw.constant,
     selective: (lgs && lgs !== 'none' && sec.length > 0) || !!raw.selective,
     logic: logicMap[lgs] != null ? logicMap[lgs] : num(raw.selectiveLogic, 0),
-    disabled: raw.enabled === false || !!(raw.disable || raw.disabled),
+    disabled: raw.enabled === false || raw.enabled === 0 || !!(raw.disable || raw.disabled),
     caseSensitive: !!raw.caseSensitive,
     wholeWords: whole,
     scanDepth: raw.scanDepth == null ? null : num(raw.scanDepth, null),
-    order: num(raw.order, 100),
+    order: num(raw.order != null ? raw.order : raw.insertion_order, 100),
     group: String(raw.group || '').trim(),
     groupWeight: num(raw.groupWeight, 100),
     probability: num(raw.probability, 100),
-    vectorized: !!raw.vectorized,
+    vectorized: !!(raw.vectorized || (raw.extensions && raw.extensions.vectorized)),
     forced: /^\s*@@activate\b/m.test(content),
     suppressed: /^\s*@@dont_activate\b/m.test(content),
   };
@@ -78,9 +78,7 @@ function wordChar(ch) {
 }
 
 function tailOk(buf, idx, len) {
-  let t = 0;
-  while (t < 6 && wordChar(buf[idx + len + t])) t++;
-  return t <= 3;
+  return !wordChar(buf[idx + len]);
 }
 
 function scanKey(key, buf, caseSensitive, wholeWords) {
@@ -91,33 +89,29 @@ function scanKey(key, buf, caseSensitive, wholeWords) {
     const flags = re.flags.includes('g') ? re.flags : re.flags + 'g';
     const rg = new RegExp(re.source, flags);
     let m;
-    let best = 0;
     while ((m = rg.exec(buf))) {
       if (!m[0]) { rg.lastIndex++; continue; }
-      if (wholeWords && !tailOk(buf, m.index, m[0].length)) continue;
-      if (!wordChar(buf[m.index - 1])) return 1;
-      best = 2;
+      if (wholeWords && (!tailOk(buf, m.index, m[0].length) || wordChar(buf[m.index - 1]))) continue;
+      return 1;
     }
-    return best;
+    return 0;
   }
   const hay = caseSensitive ? buf : buf.toLowerCase();
   const n = caseSensitive ? key : key.toLowerCase();
   if (!wholeWords) return hay.indexOf(n) === -1 ? 0 : 1;
   let i = -1;
-  let best = 0;
   while ((i = hay.indexOf(n, i + 1)) !== -1) {
-    if (!tailOk(hay, i, n.length)) continue;
-    if (!wordChar(hay[i - 1])) return 1;
-    best = 2;
+    if (!tailOk(hay, i, n.length) || wordChar(hay[i - 1])) continue;
+    return 1;
   }
-  return best;
+  return 0;
 }
 
 function hitsOf(keys, buf, cs, ww) {
   const out = [];
   keys.forEach((k) => {
     const kind = scanKey(k, buf, cs, ww);
-    if (kind > 0) out.push({ key: k, clean: kind === 1 });
+    if (kind === 1) out.push({ key: k, clean: true });
   });
   return out;
 }
@@ -196,8 +190,6 @@ function classify(entry, buf) {
   const shown = pri.slice(0, 3).map((h) => h.key).join(', ');
   let reason = fired ? ('ключ: ' + shown) : (near ? 'ключ есть, логика не пустила' : 'нет совпадений');
   if (fired && entry.probability < 100) reason += ' · шанс ' + entry.probability + '%';
-  const partial = pri.some((h) => !h.clean);
-  if (fired && partial && entry.wholeWords) reason += ' · кусок слова';
   return {
     type: fired ? 'key' : (near ? 'near' : 'miss'),
     fired,
@@ -216,8 +208,12 @@ function scanLore(books, messages, opts) {
   const list = [];
   (books || []).forEach((book) => {
     if (selected && selected.length && selected.indexOf(String(book.id)) === -1) return;
-    (book.entries || []).forEach((raw) => {
-      list.push(normalizeEntry(raw, book));
+    const rawEntries = Array.isArray(book.entries) ? book.entries : Object.values(book.entries || {});
+    rawEntries.forEach((raw, i) => {
+      if (!raw || typeof raw !== 'object') return;
+      const entry = normalizeEntry(raw, book);
+      if (!entry.uid) entry.uid = String(book.id) + '#' + i;
+      list.push(entry);
     });
   });
   const cache = {};

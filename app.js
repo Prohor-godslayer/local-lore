@@ -50,12 +50,13 @@ function bootLore(host) {
   }
 
   function groups(rows) {
-    const g = { constant: [], key: [], vector: [], near: [], miss: [], off: [] };
+    const g = { constant: [], key: [], dropped: [], vector: [], near: [], miss: [], off: [] };
     rows.forEach((r) => {
       if (r.type === 'off') g.off.push(r);
       else if (r.type === 'vector') g.vector.push(r);
-      else if (r.fired && !r.dropped && r.type === 'constant') g.constant.push(r);
-      else if (r.fired && !r.dropped) g.key.push(r);
+      else if (r.dropped) g.dropped.push(r);
+      else if (r.fired && r.type === 'constant') g.constant.push(r);
+      else if (r.fired) g.key.push(r);
       else if (r.near) g.near.push(r);
       else g.miss.push(r);
     });
@@ -101,7 +102,8 @@ function bootLore(host) {
       '<label class="lx-field">Поиск<input id="lx-lore-q" value="' + esc(query) + '" placeholder="имя или ключ"></label>' +
       '<div class="lx-list">' +
         section('Постоянные', g.constant) +
-        section('Сработало по ключу', g.key) +
+        section('Сработало', g.key) +
+        section('Вытеснены группой', g.dropped) +
         section('По смыслу — заранее не видно', g.vector) +
         section('Почти', g.near) +
         section('Молчат', g.miss) +
